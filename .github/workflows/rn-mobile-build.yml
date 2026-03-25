@@ -1,0 +1,425 @@
+name: RN Mobile Tag Build (AIBot)
+
+on:
+  push:
+    tags:
+      - 'mobile-*'
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_REPO: askchance/aibot
+
+jobs:
+  prepare:
+    name: Resolve mobile tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      channel: ${{ steps.meta.outputs.channel }}
+      version: ${{ steps.meta.outputs.version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
+      bundle_identifier_var_name: ${{ steps.meta.outputs.bundle_identifier_var_name }}
+      export_method_var_name: ${{ steps.meta.outputs.export_method_var_name }}
+      code_sign_identity_var_name: ${{ steps.meta.outputs.code_sign_identity_var_name }}
+      app_display_name_var_name: ${{ steps.meta.outputs.app_display_name_var_name }}
+      default_bundle_identifier: ${{ steps.meta.outputs.default_bundle_identifier }}
+      default_export_method: ${{ steps.meta.outputs.default_export_method }}
+      default_app_display_name: ${{ steps.meta.outputs.default_app_display_name }}
+      source_repo: ${{ steps.source.outputs.source_repo }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate mobile tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF_NAME}"
+          if [[ "$TAG_NAME" =~ ^mobile-(prod|test)-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            CHANNEL="${BASH_REMATCH[1]}"
+            VERSION="${BASH_REMATCH[2]}"
+          elif [[ "$TAG_NAME" =~ ^mobile-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            CHANNEL="prod"
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "Unsupported tag format: $TAG_NAME" >&2
+            exit 1
+          fi
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          CHANNEL_UPPER="$(printf '%s' "$CHANNEL" | tr '[:lower:]' '[:upper:]')"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "bundle_identifier_var_name=IOS_${CHANNEL_UPPER}_BUNDLE_IDENTIFIER" >> "$GITHUB_OUTPUT"
+          echo "export_method_var_name=IOS_${CHANNEL_UPPER}_EXPORT_METHOD" >> "$GITHUB_OUTPUT"
+          echo "code_sign_identity_var_name=IOS_${CHANNEL_UPPER}_CODE_SIGN_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "app_display_name_var_name=IOS_${CHANNEL_UPPER}_APP_DISPLAY_NAME" >> "$GITHUB_OUTPUT"
+          if [[ "$CHANNEL" == "test" ]]; then
+            echo "default_bundle_identifier=com.askchance.aibotmobile" >> "$GITHUB_OUTPUT"
+            echo "default_export_method=ad-hoc" >> "$GITHUB_OUTPUT"
+            echo "default_app_display_name=AIBot Test" >> "$GITHUB_OUTPUT"
+          else
+            echo "default_bundle_identifier=com.askchance.aibotmobile" >> "$GITHUB_OUTPUT"
+            echo "default_export_method=app-store" >> "$GITHUB_OUTPUT"
+            echo "default_app_display_name=AIBot" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve source checkout
+        id: source
+        shell: bash
+        env:
+          DEFAULT_SOURCE_REPO: ${{ env.SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="${GITHUB_REF_NAME}"
+          TAG_MESSAGE="$(git tag -l --format='%(contents)' "$TAG_NAME")"
+
+          extract_field() {
+            local key="$1"
+            printf '%s\n' "$TAG_MESSAGE" | sed -n "s/^${key}:[[:space:]]*//p" | head -n 1
+          }
+
+          SOURCE_REPO="$(extract_field 'source-repo')"
+          SOURCE_REF="$(extract_field 'source-ref')"
+          SOURCE_SHA="$(extract_field 'source-sha')"
+
+          if [[ -z "$SOURCE_REPO" ]]; then
+            SOURCE_REPO="$DEFAULT_SOURCE_REPO"
+          fi
+          if [[ -z "$SOURCE_REF" ]]; then
+            SOURCE_REF="refs/heads/main"
+          fi
+
+          echo "source_repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Packaging repo tag: $TAG_NAME"
+          echo "Source repo: $SOURCE_REPO"
+          echo "Source ref: $SOURCE_REF"
+          if [[ -n "$SOURCE_SHA" ]]; then
+            echo "Source sha: $SOURCE_SHA"
+          fi
+
+  source-snapshot:
+    name: Checkout shared source snapshot
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Checkout source repo
+        env:
+          MY_GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}
+          SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: ./scripts/ci/checkout-source.sh aibot-source
+
+      - name: Create source snapshot
+        run: tar -czf aibot-source.tar.gz aibot-source
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibot-source-${{ needs.prepare.outputs.tag_name }}
+          path: aibot-source.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  build-ios-device:
+    name: Build signed iOS IPA
+    runs-on: macos-latest
+    needs:
+      - prepare
+      - source-snapshot
+    env:
+      IOS_BUILD_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      IOS_TEST_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_TEST_CERTIFICATE_P12_BASE64 }}
+      IOS_TEST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_TEST_CERTIFICATE_PASSWORD }}
+      IOS_TEST_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_TEST_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEST_TEAM_ID: ${{ secrets.IOS_TEST_TEAM_ID }}
+      IOS_PROD_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_PROD_CERTIFICATE_P12_BASE64 }}
+      IOS_PROD_CERTIFICATE_PASSWORD: ${{ secrets.IOS_PROD_CERTIFICATE_PASSWORD }}
+      IOS_PROD_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROD_PROVISIONING_PROFILE_BASE64 }}
+      IOS_PROD_TEAM_ID: ${{ secrets.IOS_PROD_TEAM_ID }}
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_BUNDLE_IDENTIFIER: ${{ vars[needs.prepare.outputs.bundle_identifier_var_name] || vars.IOS_BUNDLE_IDENTIFIER || needs.prepare.outputs.default_bundle_identifier }}
+      IOS_EXPORT_METHOD: ${{ vars[needs.prepare.outputs.export_method_var_name] || vars.IOS_EXPORT_METHOD || needs.prepare.outputs.default_export_method }}
+      IOS_CODE_SIGN_IDENTITY: ${{ vars[needs.prepare.outputs.code_sign_identity_var_name] || vars.IOS_CODE_SIGN_IDENTITY || 'Apple Distribution' }}
+      IOS_APP_DISPLAY_NAME: ${{ vars[needs.prepare.outputs.app_display_name_var_name] || needs.prepare.outputs.default_app_display_name }}
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Download shared source snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: aibot-source-${{ needs.prepare.outputs.tag_name }}
+
+      - name: Extract shared source snapshot
+        run: tar -xzf aibot-source.tar.gz
+
+      - name: Restore script permissions
+        run: chmod +x "${GITHUB_WORKSPACE}/scripts/ci/build-ios-device.sh"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: aibot-source/mobile/package-lock.json
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler: '2.5.6'
+          working-directory: aibot-source/mobile
+
+      - name: Install Ruby dependencies
+        working-directory: aibot-source/mobile
+        run: bundle install
+
+      - name: Install JavaScript dependencies
+        working-directory: aibot-source/mobile
+        run: npm ci
+
+      - name: Build iOS IPA artifact
+        id: build_ios
+        continue-on-error: true
+        working-directory: aibot-source/mobile
+        run: "${GITHUB_WORKSPACE}/scripts/ci/build-ios-device.sh" "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.build_number }}" "${{ needs.prepare.outputs.tag_name }}"
+
+      - name: Show iOS archive errors
+        if: ${{ steps.build_ios.outcome != 'success' }}
+        working-directory: aibot-source/mobile
+        run: |
+          set -euo pipefail
+          LOG_PATH="build/ios/${{ needs.prepare.outputs.tag_name }}/xcodebuild-archive.log"
+          if [[ -f "$LOG_PATH" ]]; then
+            echo "Found archive log at $LOG_PATH"
+            grep -n "error:" "$LOG_PATH" | tail -n 50 || true
+            tail -n 200 "$LOG_PATH" || true
+          else
+            echo "Archive log not found: $LOG_PATH" >&2
+          fi
+
+      - name: Upload iOS build logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aibot-ios-logs-${{ needs.prepare.outputs.channel }}-${{ needs.prepare.outputs.tag_name }}
+          path: |
+            aibot-source/mobile/build/ios/${{ needs.prepare.outputs.tag_name }}/
+            aibot-source/mobile/dist/ios/${{ needs.prepare.outputs.tag_name }}/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Fail iOS job when archive/export failed
+        if: ${{ steps.build_ios.outcome != 'success' }}
+        run: exit 1
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibot-ios-${{ needs.prepare.outputs.channel }}-${{ needs.prepare.outputs.tag_name }}
+          path: aibot-source/mobile/dist/ios/${{ needs.prepare.outputs.tag_name }}/
+          retention-days: 30
+          if-no-files-found: error
+
+  build-android-release:
+    name: Build signed Android release artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - source-snapshot
+    env:
+      ANDROID_BUILD_CHANNEL: ${{ needs.prepare.outputs.channel }}
+      ANDROID_TEST_KEYSTORE_BASE64: ${{ secrets.ANDROID_TEST_KEYSTORE_BASE64 }}
+      ANDROID_TEST_STORE_PASSWORD: ${{ secrets.ANDROID_TEST_STORE_PASSWORD }}
+      ANDROID_TEST_KEY_ALIAS: ${{ secrets.ANDROID_TEST_KEY_ALIAS }}
+      ANDROID_TEST_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+      ANDROID_PROD_KEYSTORE_BASE64: ${{ secrets.ANDROID_PROD_KEYSTORE_BASE64 }}
+      ANDROID_PROD_STORE_PASSWORD: ${{ secrets.ANDROID_PROD_STORE_PASSWORD }}
+      ANDROID_PROD_KEY_ALIAS: ${{ secrets.ANDROID_PROD_KEY_ALIAS }}
+      ANDROID_PROD_KEY_PASSWORD: ${{ secrets.ANDROID_PROD_KEY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Download shared source snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: aibot-source-${{ needs.prepare.outputs.tag_name }}
+
+      - name: Extract shared source snapshot
+        run: tar -xzf aibot-source.tar.gz
+
+      - name: Restore script permissions
+        run: chmod +x "${GITHUB_WORKSPACE}/scripts/ci/build-android-release.sh"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: aibot-source/mobile/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install JavaScript dependencies
+        working-directory: aibot-source/mobile
+        run: npm ci
+
+      - name: Build Android release artifacts
+        working-directory: aibot-source/mobile
+        run: "${GITHUB_WORKSPACE}/scripts/ci/build-android-release.sh" "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.build_number }}" "${{ needs.prepare.outputs.tag_name }}"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibot-android-${{ needs.prepare.outputs.channel }}-${{ needs.prepare.outputs.tag_name }}
+          path: aibot-source/mobile/dist/android/${{ needs.prepare.outputs.tag_name }}/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish-github-release:
+    name: Publish GitHub Release assets
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-ios-device
+      - build-android-release
+    if: ${{ always() && needs.build-ios-device.result == 'success' && (needs.build-android-release.result == 'success' || needs.build-android-release.result == 'skipped') }}
+    steps:
+      - name: Download iOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: aibot-ios-${{ needs.prepare.outputs.channel }}-${{ needs.prepare.outputs.tag_name }}
+          path: release-assets/ios
+
+      - name: Download Android artifacts
+        if: ${{ needs.build-android-release.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: aibot-android-${{ needs.prepare.outputs.channel }}-${{ needs.prepare.outputs.tag_name }}
+          path: release-assets/android
+
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "GitHub Release already exists for $TAG_NAME"
+          else
+            if [[ "$CHANNEL" == "test" ]]; then
+              gh release create "$TAG_NAME" \
+                --title "$TAG_NAME" \
+                --generate-notes \
+                --prerelease
+            else
+              gh release create "$TAG_NAME" \
+                --title "$TAG_NAME" \
+                --generate-notes
+            fi
+          fi
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t release_files < <(find release-assets -type f | sort)
+          if [[ ${#release_files[@]} -eq 0 ]]; then
+            echo "No release assets found" >&2
+            exit 1
+          fi
+
+          gh release upload "$TAG_NAME" "${release_files[@]}" --clobber
+
+  update-download-page:
+    name: Update GitHub Pages download page
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - publish-github-release
+    if: ${{ needs.publish-github-release.result == 'success' }}
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.MY_GITHUB_TOKEN || github.token }}
+
+      - name: Resolve release asset URLs
+        id: assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$(gh release view "$TAG_NAME" --json assets)"
+          IPA_URL="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".ipa"))][0].url // empty')"
+          APK_URL="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".apk"))][0].url // empty')"
+          echo "ipa_url=${IPA_URL}" >> "$GITHUB_OUTPUT"
+          echo "apk_url=${APK_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Update docs for download page
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/update-download-page.sh
+          ./scripts/ci/update-download-page.sh
+        env:
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+          BUNDLE_ID: ${{ vars[needs.prepare.outputs.bundle_identifier_var_name] || vars.IOS_BUNDLE_IDENTIFIER || needs.prepare.outputs.default_bundle_identifier }}
+          DISPLAY_NAME: ${{ vars[needs.prepare.outputs.app_display_name_var_name] || needs.prepare.outputs.default_app_display_name }}
+          IPA_URL: ${{ steps.assets.outputs.ipa_url }}
+          APK_URL: ${{ steps.assets.outputs.apk_url }}
+
+      - name: Commit and push updated pages
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/release.json docs/manifest.plist
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update download page for ${{ needs.prepare.outputs.tag_name }}"
+            git push
+          fi

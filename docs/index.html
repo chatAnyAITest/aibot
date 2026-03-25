@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIBot App 下载</title>
+  <style>
+    :root {
+      --bg: #f0f4f8;
+      --card-bg: #ffffff;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --text: #0f172a;
+      --text-secondary: #64748b;
+      --border: #cbd5e1;
+      --android-green: #059669;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container { max-width: 420px; width: 100%; }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 40px 32px;
+      text-align: center;
+    }
+
+    .app-icon {
+      width: 96px;
+      height: 96px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, #1e3a5f 0%, #3b82f6 55%, #60a5fa 100%);
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 44px;
+      box-shadow: 0 4px 16px rgba(37,99,235,0.25);
+    }
+
+    h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+
+    .channel-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+    .channel-test  { background: #fef3c7; color: #92400e; }
+    .channel-prod  { background: #d1fae5; color: #065f46; }
+
+    .version-info {
+      color: var(--text-secondary);
+      font-size: 14px;
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+    .version-info strong { color: var(--text); }
+
+    .install-btn {
+      display: block;
+      width: 100%;
+      padding: 16px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .install-btn:hover { background: var(--primary-hover); }
+    .install-btn:active { transform: scale(0.98); }
+    .install-btn.android { background: var(--android-green); margin-top: 12px; }
+    .install-btn.android:hover { background: #047857; }
+
+    .help-text {
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .no-release {
+      padding: 20px;
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+
+    .loading {
+      padding: 40px;
+      color: var(--text-secondary);
+    }
+    .loading::after {
+      content: '';
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="app-icon">🤖</div>
+      <h1 id="app-name">AIBot</h1>
+      <div id="badge-container"></div>
+      <div id="content" class="loading">加载中</div>
+    </div>
+    <div class="footer" id="footer"></div>
+  </div>
+
+  <script>
+    const REPO_OWNER = 'askchance';
+    const REPO_NAME = 'aibot-ci';
+    const PAGES_BASE = `https://${REPO_OWNER.toLowerCase()}.github.io/${REPO_NAME}`;
+
+    async function loadReleaseInfo() {
+      const resp = await fetch(`${PAGES_BASE}/release.json?_=${Date.now()}`);
+      if (!resp.ok) throw new Error('release.json not found');
+      return resp.json();
+    }
+
+    function renderPage(info) {
+      const contentEl = document.getElementById('content');
+      const badgeEl = document.getElementById('badge-container');
+      const nameEl = document.getElementById('app-name');
+      const footerEl = document.getElementById('footer');
+
+      const channel = info.channel || 'test';
+      const version = info.version || 'unknown';
+      const displayName = info.app_display_name || (channel === 'test' ? 'AIBot Test' : 'AIBot');
+      const publishDate = info.date || '-';
+      const tagName = info.tag_name || '';
+      const ipaUrl = info.ipa_url || '';
+      const apkUrl = info.apk_url || '';
+
+      nameEl.textContent = displayName;
+      badgeEl.innerHTML = `<span class="channel-badge channel-${channel}">${channel}</span>`;
+
+      const manifestUrl = `${PAGES_BASE}/manifest.plist`;
+      const installUrl = ipaUrl
+        ? `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`
+        : '';
+
+      let html = `
+        <div class="version-info">
+          <strong>版本：</strong>${version}<br>
+          <strong>发布日期：</strong>${publishDate}
+        </div>
+      `;
+
+      if (installUrl) {
+        html += `<a class="install-btn" href="${installUrl}">安装 iOS 版本</a>`;
+      }
+      if (apkUrl) {
+        html += `<a class="install-btn android" href="${apkUrl}">下载 Android APK</a>`;
+      }
+      if (!ipaUrl && !apkUrl) {
+        html += `<div class="no-release">此版本暂无可下载的安装包。</div>`;
+      }
+
+      html += `
+        <div class="help-text">
+          iOS 用户请使用 <strong>Safari</strong> 浏览器打开此页面并点击安装。<br>
+          安装后请前往 <strong>设置 → 通用 → VPN与设备管理</strong> 信任开发者证书。
+        </div>
+      `;
+
+      contentEl.className = '';
+      contentEl.innerHTML = html;
+      footerEl.textContent = `Tag: ${tagName}`;
+    }
+
+    loadReleaseInfo()
+      .then(renderPage)
+      .catch(err => {
+        console.error(err);
+        document.getElementById('content').className = 'no-release';
+        document.getElementById('content').textContent = '暂无可用版本，请等待首次构建完成。';
+      });
+  </script>
+</body>
+</html>

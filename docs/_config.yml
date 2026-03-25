@@ -1,0 +1,3 @@
+include:
+  - "*.plist"
+  - "*.json"

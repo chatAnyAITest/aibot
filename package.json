@@ -1,0 +1,9 @@
+{
+  "name": "aibot-packaging",
+  "private": true,
+  "scripts": {
+    "tag:mobile:prod": "bash ./scripts/release/create-tag.sh mobile prod",
+    "tag:mobile:test": "bash ./scripts/release/create-tag.sh mobile test",
+    "tag:server": "bash ./scripts/release/create-tag.sh server"
+  }
+}
