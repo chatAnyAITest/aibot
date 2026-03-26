@@ -26,7 +26,39 @@ perl -i -pe 's/versionName "[^"]*"/versionName "'"$VERSION"'"/' "$GRADLE_FILE"
 
 cd "$ANDROID_DIR"
 chmod +x ./gradlew
-./gradlew assembleRelease --no-daemon
+
+# Optional: mirror when services.gradle.org is blocked (set GRADLE_DISTRIBUTION_URL in workflow).
+WRAPPER_PROPS="gradle/wrapper/gradle-wrapper.properties"
+if [[ -n "${GRADLE_DISTRIBUTION_URL:-}" && -f "$WRAPPER_PROPS" ]]; then
+  echo "Patching distributionUrl in $WRAPPER_PROPS (mirror)"
+  _tmp="$(mktemp)"
+  GRADLE_DISTRIBUTION_URL="$GRADLE_DISTRIBUTION_URL" awk '
+    /^distributionUrl=/ { print "distributionUrl=" ENVIRON["GRADLE_DISTRIBUTION_URL"]; next }
+    { print }
+  ' "$WRAPPER_PROPS" > "$_tmp" && mv "$_tmp" "$WRAPPER_PROPS"
+fi
+
+run_gradle() {
+  ./gradlew assembleRelease --no-daemon "$@"
+}
+
+MAX_ATTEMPTS="${GRADLE_DOWNLOAD_RETRIES:-4}"
+DELAY_SEC="${GRADLE_RETRY_DELAY_SEC:-20}"
+attempt=1
+while [[ "$attempt" -le "$MAX_ATTEMPTS" ]]; do
+  if run_gradle; then
+    break
+  fi
+  rc=$?
+  if [[ "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
+    echo "Gradle failed after $MAX_ATTEMPTS attempts (exit $rc)" >&2
+    exit "$rc"
+  fi
+  echo "Gradle attempt $attempt failed (exit $rc); retrying in ${DELAY_SEC}s..."
+  sleep "$DELAY_SEC"
+  attempt=$((attempt + 1))
+  DELAY_SEC=$((DELAY_SEC + 10))
+done
 
 APK_SRC="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -1)"
 if [[ -z "$APK_SRC" ]]; then

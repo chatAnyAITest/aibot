@@ -266,6 +266,11 @@ jobs:
       ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      # Avoid IPv6 / flaky routes to services.gradle.org; Gradle JVM picks these up.
+      GRADLE_OPTS: -Djava.net.preferIPv4Stack=true -Dhttps.protocols=TLSv1.2,TLSv1.3
+      JAVA_TOOL_OPTIONS: -Djava.net.preferIPv4Stack=true
+      # Optional full zip URL if services.gradle.org is blocked (mirror). Picked up by build-android-release.sh.
+      GRADLE_DISTRIBUTION_URL: ${{ secrets.GRADLE_DISTRIBUTION_URL }}
     steps:
       - name: Checkout packaging repo
         uses: actions/checkout@v4
@@ -298,6 +303,9 @@ jobs:
       - name: Install JavaScript dependencies
         working-directory: aibot-source/mobile
         run: npm ci
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build Android release artifacts
         working-directory: aibot-source/mobile
