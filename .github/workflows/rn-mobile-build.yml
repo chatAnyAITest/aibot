@@ -203,7 +203,11 @@ jobs:
         id: build_ios
         continue-on-error: true
         working-directory: aibot-source/mobile
-        run: "${GITHUB_WORKSPACE}/scripts/ci/build-ios-device.sh" "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.build_number }}" "${{ needs.prepare.outputs.tag_name }}"
+        run: |
+          "${GITHUB_WORKSPACE}/scripts/ci/build-ios-device.sh" \
+            "${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.build_number }}" \
+            "${{ needs.prepare.outputs.tag_name }}"
 
       - name: Show iOS archive errors
         if: ${{ steps.build_ios.outcome != 'success' }}
@@ -297,7 +301,11 @@ jobs:
 
       - name: Build Android release artifacts
         working-directory: aibot-source/mobile
-        run: "${GITHUB_WORKSPACE}/scripts/ci/build-android-release.sh" "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.build_number }}" "${{ needs.prepare.outputs.tag_name }}"
+        run: |
+          "${GITHUB_WORKSPACE}/scripts/ci/build-android-release.sh" \
+            "${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.build_number }}" \
+            "${{ needs.prepare.outputs.tag_name }}"
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
