@@ -45,24 +45,38 @@ run_gradle() {
 MAX_ATTEMPTS="${GRADLE_DOWNLOAD_RETRIES:-4}"
 DELAY_SEC="${GRADLE_RETRY_DELAY_SEC:-20}"
 attempt=1
+gradle_rc=1
 while [[ "$attempt" -le "$MAX_ATTEMPTS" ]]; do
-  if run_gradle; then
+  set +e
+  run_gradle
+  gradle_rc=$?
+  set -e
+  if [[ "$gradle_rc" -eq 0 ]]; then
     break
   fi
-  rc=$?
   if [[ "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
-    echo "Gradle failed after $MAX_ATTEMPTS attempts (exit $rc)" >&2
-    exit "$rc"
+    echo "Gradle failed after $MAX_ATTEMPTS attempts (exit $gradle_rc)" >&2
+    exit "$gradle_rc"
   fi
-  echo "Gradle attempt $attempt failed (exit $rc); retrying in ${DELAY_SEC}s..."
+  echo "Gradle attempt $attempt failed (exit $gradle_rc); retrying in ${DELAY_SEC}s..."
   sleep "$DELAY_SEC"
   attempt=$((attempt + 1))
   DELAY_SEC=$((DELAY_SEC + 10))
 done
 
-APK_SRC="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -1)"
+if [[ "$gradle_rc" -ne 0 ]]; then
+  echo "Gradle did not complete successfully (exit $gradle_rc)" >&2
+  exit "$gradle_rc"
+fi
+
+# Prefer .../apk/release/*.apk; fall back to any APK under outputs.
+APK_SRC="$(find app/build/outputs/apk/release -maxdepth 3 -type f -name '*.apk' 2>/dev/null | head -1)"
 if [[ -z "$APK_SRC" ]]; then
-  echo "No release APK found under app/build/outputs/apk/release" >&2
+  APK_SRC="$(find app/build/outputs -type f -name '*.apk' 2>/dev/null | head -1)"
+fi
+if [[ -z "$APK_SRC" ]]; then
+  echo "No release APK under app/build/outputs; listing tree:" >&2
+  find app/build/outputs -type f 2>/dev/null | head -80 >&2 || true
   exit 1
 fi
 
