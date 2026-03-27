@@ -144,9 +144,12 @@
   </div>
 
   <script>
-    const REPO_OWNER = 'askchance';
-    const REPO_NAME = 'aibot-ci';
-    const PAGES_BASE = `https://${REPO_OWNER.toLowerCase()}.github.io/${REPO_NAME}`;
+    const PAGES_BASE = (() => {
+      const { origin, pathname } = window.location;
+      // Strip trailing slash and any /index.html
+      const base = (origin + pathname).replace(/\/index\.html$/, '').replace(/\/$/, '');
+      return base;
+    })();
 
     async function loadReleaseInfo() {
       const resp = await fetch(`${PAGES_BASE}/release.json?_=${Date.now()}`);
