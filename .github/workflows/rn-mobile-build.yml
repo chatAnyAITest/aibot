@@ -314,7 +314,7 @@ jobs:
           ref: main
           token: ${{ secrets.MY_GITHUB_TOKEN || github.token }}
 
-      - name: Resolve release asset URLs
+      - name: Resolve and download IPA
         id: assets
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -323,10 +323,20 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_JSON="$(gh release view "$TAG_NAME" --json assets)"
-          IPA_URL="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".ipa"))][0].url // empty')"
-          APK_URL="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".apk"))][0].url // empty')"
-          echo "ipa_url=${IPA_URL}" >> "$GITHUB_OUTPUT"
-          echo "apk_url=${APK_URL}" >> "$GITHUB_OUTPUT"
+          IPA_FILENAME="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".ipa"))][0].name // empty')"
+          IPA_GITHUB_URL="$(echo "$RELEASE_JSON" | jq -r '[.assets[] | select(.name | endswith(".ipa"))][0].url // empty')"
+
+          if [[ -n "$IPA_FILENAME" && -n "$IPA_GITHUB_URL" ]]; then
+            # Download via gh CLI (handles auth + redirect automatically)
+            gh release download "$TAG_NAME" --pattern "*.ipa" --dir docs/ipa --clobber
+            PAGES_IPA_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ipa/${IPA_FILENAME}"
+            echo "ipa_url=${PAGES_IPA_URL}" >> "$GITHUB_OUTPUT"
+            echo "ipa_filename=${IPA_FILENAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ipa_url=" >> "$GITHUB_OUTPUT"
+            echo "ipa_filename=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "apk_url=" >> "$GITHUB_OUTPUT"
 
       - name: Update docs for download page
         run: |
@@ -348,6 +358,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/release.json docs/manifest.plist
+          # Stage IPA if downloaded
+          if [[ -n "${{ steps.assets.outputs.ipa_filename }}" ]]; then
+            git add "docs/ipa/${{ steps.assets.outputs.ipa_filename }}"
+          fi
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
