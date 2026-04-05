@@ -1,10 +1,10 @@
 {
-  "tag_name": "mobile-test-0.0.8",
-  "version": "0.0.8",
+  "tag_name": "mobile-test-0.0.9",
+  "version": "0.0.9",
   "channel": "test",
   "app_display_name": "AIBot Test",
   "bundle_identifier": "com.askchance.aibotmobile",
-  "ipa_url": "https://chatAnyAITest.github.io/aibot/ipa/AIBot-ios-test-mobile-test-0.0.8.ipa",
+  "ipa_url": "https://chatAnyAITest.github.io/aibot/ipa/AIBot-ios-test-mobile-test-0.0.9.ipa",
   "apk_url": "",
-  "date": "2026-04-04"
+  "date": "2026-04-05"
 }
